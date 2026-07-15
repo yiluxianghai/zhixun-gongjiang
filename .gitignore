@@ -20,6 +20,7 @@ backend/data/
 cloudflared
 cloudflared.tgz
 gh
+gh.tar.gz
 *.log
 .env
 
