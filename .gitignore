@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+
+# Node
+node_modules/
+.next/
+frontend/out/
+frontend/.next/
+
+# Data & uploads
+backend/data/
+
+# Misc
+.DS_Store
+.qoder/
+cloudflared
+cloudflared.tgz
+*.log
+.env
