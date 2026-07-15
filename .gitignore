@@ -19,5 +19,10 @@ backend/data/
 .qoder/
 cloudflared
 cloudflared.tgz
+gh
 *.log
 .env
+
+# 报名表/文档（不上传）
+*.docx
+~$*
