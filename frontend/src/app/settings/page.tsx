@@ -14,6 +14,19 @@ export default function SettingsPage() {
   const [editingModel, setEditingModel] = useState<AIModelConfig | null>(null);
   const [showModelForm, setShowModelForm] = useState(false);
 
+  // 快速API配置
+  const [quickProvider, setQuickProvider] = useState('deepseek');
+  const [quickApiKey, setQuickApiKey] = useState('');
+  const [quickSaving, setQuickSaving] = useState(false);
+
+  const providerPresets: Record<string, { name: string; provider: string; base_url: string; model_name: string; label: string; vision: boolean }> = {
+    deepseek: { name: 'DeepSeek Chat', provider: 'deepseek', base_url: 'https://api.deepseek.com/v1', model_name: 'deepseek-chat', label: 'DeepSeek（国内直连·性价比高）', vision: false },
+    'gpt-4o': { name: 'GPT-4o', provider: 'openai', base_url: 'https://api.openai.com/v1', model_name: 'gpt-4o', label: 'OpenAI GPT-4o（支持图片识别）', vision: true },
+    'gpt-4o-mini': { name: 'GPT-4o-mini', provider: 'openai', base_url: 'https://api.openai.com/v1', model_name: 'gpt-4o-mini', label: 'OpenAI GPT-4o-mini（便宜）', vision: true },
+    glm: { name: 'GLM-4V', provider: 'custom', base_url: 'https://open.bigmodel.cn/api/paas/v4', model_name: 'glm-4v', label: '智谱GLM-4V（支持图片识别）', vision: true },
+    qwen: { name: 'Qwen-VL-Plus', provider: 'custom', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model_name: 'qwen-vl-plus', label: '通义千问VL（支持图片识别）', vision: true },
+  };
+
   // 知识库
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseConfig[]>([]);
   const [editingKB, setEditingKB] = useState<KnowledgeBaseConfig | null>(null);
@@ -60,6 +73,48 @@ export default function SettingsPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // 快速配置API：保存并激活
+  const handleQuickSave = async () => {
+    if (!quickApiKey.trim()) {
+      setMessage("请输入API Key");
+      return;
+    }
+    setQuickSaving(true);
+    setMessage("");
+    try {
+      const preset = providerPresets[quickProvider];
+      // 查找现有的非规则引擎模型
+      const existingModel = models.find((m) => m.provider !== 'rule_engine');
+      if (existingModel) {
+        // 更新现有模型
+        await api.updateModel(existingModel.id, {
+          name: preset.name, provider: preset.provider, api_key: quickApiKey.trim(),
+          base_url: preset.base_url, model_name: preset.model_name,
+          temperature: 0.3, max_tokens: 2000,
+        });
+        await api.activateModel(existingModel.id);
+      } else {
+        // 创建新模型
+        await api.createModel({
+          name: preset.name, provider: preset.provider, api_key: quickApiKey.trim(),
+          base_url: preset.base_url, model_name: preset.model_name,
+          temperature: 0.3, max_tokens: 2000,
+        });
+        // 激活新创建的模型（取最后一个）
+        const refreshed = await api.getModels();
+        const newModel = refreshed.find((m) => m.provider !== 'rule_engine');
+        if (newModel) await api.activateModel(newModel.id);
+      }
+      setMessage(`✅ ${preset.label} 配置成功并已激活！${preset.vision ? '支持图片识别。' : '不支持图片识别，仅文字分析。'}`);
+      setQuickApiKey('');
+      loadData();
+    } catch (err) {
+      setMessage(`配置失败: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setQuickSaving(false);
+    }
+  };
 
   const tabs: { key: TabType; label: string; icon: string }[] = [
     { key: "models", label: "AI模型配置", icon: "🤖" },
@@ -139,8 +194,51 @@ export default function SettingsPage() {
       {/* ========== 模型配置 ========== */}
       {activeTab === "models" && (
         <div className="space-y-4">
+          {/* 快速API配置面板 */}
+          <div className="card p-5 border-2 border-purple-200 bg-purple-50/30">
+            <h3 className="text-sm font-semibold text-gray-800 mb-1">⚡ 快速配置AI模型</h3>
+            <p className="text-xs text-gray-500 mb-3">选择平台并填入API Key，保存后自动激活。无需手动填写Base URL和模型名称。</p>
+            <div className="grid grid-cols-12 gap-3">
+              <div className="col-span-4">
+                <label className="block text-xs text-gray-500 mb-1">AI平台</label>
+                <select
+                  value={quickProvider}
+                  onChange={(e) => setQuickProvider(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                >
+                  {Object.entries(providerPresets).map(([key, p]) => (
+                    <option key={key} value={key}>{p.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="col-span-6">
+                <label className="block text-xs text-gray-500 mb-1">API Key</label>
+                <input
+                  value={quickApiKey}
+                  onChange={(e) => setQuickApiKey(e.target.value)}
+                  type="password"
+                  placeholder="粘贴你的API Key..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+              </div>
+              <div className="col-span-2 flex items-end">
+                <button
+                  onClick={handleQuickSave}
+                  disabled={quickSaving}
+                  className="w-full px-3 py-2 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700 transition disabled:opacity-50"
+                >
+                  {quickSaving ? "保存中..." : "保存并激活"}
+                </button>
+              </div>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-400">
+              <span>💡 DeepSeek: <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener" className="text-blue-500 hover:underline">获取Key</a>（新用户免费）</span>
+              <span>💡 OpenAI: <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" className="text-blue-500 hover:underline">获取Key</a>（需充值）</span>
+            </div>
+          </div>
+
           <div className="flex items-center justify-between">
-            <p className="text-sm text-gray-500">配置AI大语言模型的API连接参数</p>
+            <p className="text-sm text-gray-500">高级配置（手动填写Base URL等参数）</p>
             <button
               onClick={() => { setEditingModel(null); setShowModelForm(true); }}
               className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition"
