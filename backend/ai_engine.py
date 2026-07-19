@@ -354,7 +354,9 @@ async def analyze_problem(
                 risk_level, _ = _kb.determine_risk_level(text, cat_code)
                 risk_rule = _kb.get_risk_rule(risk_level)
                 llm_result["rectification_deadline_days"] = risk_rule["deadline_days"]
-            print(f"[AI引擎] LLM分析完成（RAG={"有" if rag_context else "无"}），置信度: {llm_result.get("confidence", "N/A")}")
+            rag_status = '有' if rag_context else '无'
+            confidence = llm_result.get('confidence', 'N/A')
+            print(f"[AI引擎] LLM分析完成（RAG={rag_status}），置信度: {confidence}")
             return llm_result
 
     # 使用规则引擎
