@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { api, type AIModelConfig, type KnowledgeBaseConfig, type AnalysisSkill, type AIConfig, type KnowledgeDocument } from "@/lib/api";
+import { api, type AIModelConfig, type KnowledgeBaseConfig, type AnalysisSkill, type AIConfig, type KnowledgeDocument, type YoloModelInfo } from "@/lib/api";
 
 type TabType = "models" | "knowledge" | "skills";
 
@@ -18,6 +18,10 @@ export default function SettingsPage() {
   const [quickProvider, setQuickProvider] = useState('deepseek');
   const [quickApiKey, setQuickApiKey] = useState('');
   const [quickSaving, setQuickSaving] = useState(false);
+
+  // 本地YOLO模型
+  const [yoloInfo, setYoloInfo] = useState<YoloModelInfo | null>(null);
+  const [yoloActivating, setYoloActivating] = useState(false);
 
   const providerPresets: Record<string, { name: string; provider: string; base_url: string; model_name: string; label: string; vision: boolean }> = {
     deepseek: { name: 'DeepSeek Chat', provider: 'deepseek', base_url: 'https://api.deepseek.com/v1', model_name: 'deepseek-chat', label: 'DeepSeek（国内直连·性价比高）', vision: false },
@@ -57,6 +61,11 @@ export default function SettingsPage() {
       setKnowledgeBases(k);
       setSkills(s);
       setAIConfig(c);
+      // 加载YOLO模型状态
+      try {
+        const yoloStatus = await api.getYoloStatus();
+        setYoloInfo(yoloStatus);
+      } catch { setYoloInfo(null); }
       // 加载每个知识库的文档
       const docsMap: Record<number, KnowledgeDocument[]> = {};
       for (const kb of k) {
@@ -113,6 +122,21 @@ export default function SettingsPage() {
       setMessage(`配置失败: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setQuickSaving(false);
+    }
+  };
+
+  // 激活本地YOLO模型
+  const handleActivateYolo = async () => {
+    setYoloActivating(true);
+    setMessage('');
+    try {
+      await api.activateYolo();
+      setMessage('✅ 本地YOLO模型已激活！图片识别将使用本地模型，无需API Key。');
+      loadData();
+    } catch (err) {
+      setMessage(`YOLO模型激活失败: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setYoloActivating(false);
     }
   };
 
@@ -235,6 +259,63 @@ export default function SettingsPage() {
               <span>💡 DeepSeek: <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener" className="text-blue-500 hover:underline">获取Key</a>（新用户免费）</span>
               <span>💡 OpenAI: <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" className="text-blue-500 hover:underline">获取Key</a>（需充值）</span>
             </div>
+          </div>
+
+          {/* 本地YOLO模型面板 */}
+          <div className="card p-4 border border-green-200 bg-green-50/30">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-800">🔒 本地YOLO模型（离线图片识别）</h3>
+                <p className="text-xs text-gray-500 mt-0.5">使用本地训练的YOLOv8模型识别安全违规和质量缺陷，无需API Key</p>
+              </div>
+              {yoloInfo?.available ? (
+                <button
+                  onClick={handleActivateYolo}
+                  disabled={yoloActivating}
+                  className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition disabled:opacity-50"
+                >
+                  {yoloActivating ? "激活中..." : "⚡ 激活YOLO模型"}
+                </button>
+              ) : (
+                <span className="text-xs text-gray-400 px-3 py-1.5 bg-gray-100 rounded-lg">未安装模型</span>
+              )}
+            </div>
+            {yoloInfo?.available ? (
+              <div className="mt-3 grid grid-cols-3 gap-3 text-xs">
+                <div className="bg-white rounded-lg p-2 border border-gray-100">
+                  <span className="text-gray-400">模型大小</span>
+                  <p className="font-medium text-gray-700 mt-0.5">{yoloInfo.model_size_mb} MB</p>
+                </div>
+                <div className="bg-white rounded-lg p-2 border border-gray-100">
+                  <span className="text-gray-400">检测类别</span>
+                  <p className="font-medium text-gray-700 mt-0.5">{yoloInfo.num_classes} 类</p>
+                </div>
+                <div className="bg-white rounded-lg p-2 border border-gray-100">
+                  <span className="text-gray-400">状态</span>
+                  <p className="font-medium text-green-600 mt-0.5">✅ 可用</p>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-3 text-xs text-gray-500 bg-white rounded-lg p-3 border border-gray-100">
+                <p className="font-medium text-gray-600 mb-1">📋 如何训练本地YOLO模型：</p>
+                <ol className="list-decimal list-inside space-y-0.5 text-gray-500">
+                  <li>获取数据集：<a href="https://universe.roboflow.com/search?q=construction+safety" target="_blank" rel="noopener" className="text-blue-500 hover:underline">Roboflow</a> 搜索 "construction safety" / "PPE detection"</li>
+                  <li>准备数据集：<code className="bg-gray-100 px-1 rounded">cd backend/train && python prepare_dataset.py --source /path/to/data --format roboflow</code></li>
+                  <li>训练模型：<code className="bg-gray-100 px-1 rounded">python train_yolo.py --dataset ./dataset --epochs 100 --full</code></li>
+                  <li>训练完成后，ONNX模型自动保存到 <code className="bg-gray-100 px-1 rounded">backend/models/</code> 目录</li>
+                  <li>刷新此页面，点击「激活YOLO模型」即可使用</li>
+                </ol>
+              </div>
+            )}
+            {yoloInfo?.available && yoloInfo.classes && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {yoloInfo.classes.map((c) => (
+                  <span key={c.id} className={`text-xs px-2 py-0.5 rounded ${c.type === 'violation' ? 'bg-red-50 text-red-600' : 'bg-orange-50 text-orange-600'}`}>
+                    {c.name}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="flex items-center justify-between">

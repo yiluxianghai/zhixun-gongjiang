@@ -398,7 +398,7 @@ async def analyze_image(
     model_config: dict = None,
 ) -> Optional[dict]:
     """
-    图片AI识别：使用LLM Vision能力分析工程现场照片
+    图片AI识别：支持本地YOLO模型和LLM Vision两种方式
     
     Args:
         image_base64: 图片的base64编码（不含data:前缀）
@@ -412,13 +412,50 @@ async def analyze_image(
     if not model_config:
         return None
 
+    _provider = model_config.get('provider', '')
+
+    # 方式一：本地YOLO模型（无需API Key，离线推理）
+    if _provider == 'yolo_local':
+        return await _analyze_image_yolo(image_base64, inspection_area)
+
+    # 方式二：LLM Vision API
+    return await _analyze_image_llm(image_base64, image_mime, inspection_area, model_config)
+
+
+async def _analyze_image_yolo(image_base64: str, inspection_area: str) -> Optional[dict]:
+    """使用本地YOLO ONNX模型检测图片"""
+    try:
+        from yolo_detector import detect_image
+        import base64 as b64mod
+
+        image_bytes = b64mod.b64decode(image_base64)
+        result = detect_image(image_bytes, inspection_area)
+        if result:
+            v_count = len(result.get('violations', []))
+            d_count = len(result.get('defects', []))
+            print(f"[AI引擎] YOLO图片识别完成，发现{v_count}个违规，{d_count}个缺陷")
+        return result
+    except ImportError:
+        print('[AI引擎] YOLO模块未安装，请安装: pip install onnxruntime pillow numpy')
+        return None
+    except Exception as e:
+        print(f'[AI引擎] YOLO图片识别失败: {e}')
+        return None
+
+
+async def _analyze_image_llm(
+    image_base64: str,
+    image_mime: str,
+    inspection_area: str,
+    model_config: dict,
+) -> Optional[dict]:
+    """使用LLM Vision API分析图片（GPT-4o/智谱GLM等）"""
     _api_key = model_config.get('api_key', '')
     _base_url = model_config.get('base_url', '') or LLM_BASE_URL
     _model = model_config.get('model_name', '') or 'gpt-4o'
     _temperature = model_config.get('temperature', 0.3)
-    _provider = model_config.get('provider', '')
 
-    if not _api_key or _provider == 'rule_engine':
+    if not _api_key:
         return None
 
     # 构建用户消息（多模态：文本+图片）
@@ -455,9 +492,9 @@ async def analyze_image(
             json_match = re.search(r'\{[\s\S]*\}', content)
             if json_match:
                 parsed = json.loads(json_match.group())
-                print(f"[AI引擎] 图片识别完成，发现{len(parsed.get('violations', []))}个违规，{len(parsed.get('defects', []))}个缺陷")
+                print(f"[AI引擎] LLM图片识别完成，发现{len(parsed.get('violations', []))}个违规，{len(parsed.get('defects', []))}个缺陷")
                 return parsed
             return None
     except Exception as e:
-        print(f'[AI引擎] 图片识别失败: {e}')
+        print(f'[AI引擎] LLM图片识别失败: {e}')
         return None

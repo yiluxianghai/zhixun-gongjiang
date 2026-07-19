@@ -1,0 +1,8 @@
+# YOLO模型训练依赖（仅在本地训练时安装，部署不需要）
+# 安装命令: pip install -r requirements-train.txt
+
+ultralytics>=8.1.0
+torch>=2.0.0
+torchvision>=0.15.0
+# onnx和pillow在主requirements.txt中已有
+onnx>=1.14.0

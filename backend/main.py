@@ -355,6 +355,20 @@ async def analyze_image_api(
         model_config=model_config,
     )
 
+    # 如果LLM不支持视觉分析，尝试本地YOLO模型作为后备
+    if result is None and m.provider != 'yolo_local':
+        try:
+            from yolo_detector import is_model_available, detect_image
+            import base64 as b64mod
+            if is_model_available():
+                image_bytes = b64mod.b64decode(image_base64)
+                yolo_result = detect_image(image_bytes, inspection_area)
+                if yolo_result:
+                    yolo_result['description'] = f"[本地YOLO模型识别]\n{yolo_result.get('description', '')}"
+                    return {"code": 200, "data": yolo_result}
+        except Exception as e:
+            print(f"[图片识别] YOLO后备失败: {e}")
+
     if result:
         return {"code": 200, "data": result}
     else:
@@ -363,8 +377,8 @@ async def analyze_image_api(
             "violations": [],
             "defects": [],
             "risk_level": "一般",
-            "description": "图片识别失败，可能当前模型不支持视觉分析。请确认已激活支持视觉的模型（如GPT-4o、Claude 3.5等）。",
-            "recommendations": ["在AI配置中激活支持视觉的LLM模型"],
+            "description": "图片识别失败。可能的原因：\n1. 当前模型不支持视觉分析（如DeepSeek）\n2. 未配置API Key\n\n解决方案：\n- 激活支持视觉的LLM模型（GPT-4o/智谱GLM-4V）\n- 或训练本地YOLO模型进行离线识别",
+            "recommendations": ["在AI配置中激活支持视觉的LLM模型（GPT-4o/智谱GLM-4V）", "或训练本地YOLO模型：运行 backend/train/train_yolo.py"],
             "confidence": 0.0,
         }}
 
@@ -903,6 +917,63 @@ def activate_model(model_id: int, db: Session = Depends(get_db)):
     model.is_active = 1
     db.commit()
     return {"code": 200, "data": {"id": model_id}}
+
+# --- 本地YOLO模型 ---
+
+@app.get("/api/ai/yolo-status")
+def yolo_status():
+    """检查本地YOLO模型是否可用"""
+    try:
+        from yolo_detector import is_model_available, get_model_info
+        info = get_model_info()
+        return {"code": 200, "data": info}
+    except ImportError:
+        return {"code": 200, "data": {
+            "available": False,
+            "error": "yolo_detector模块未安装",
+        }}
+
+@app.post("/api/ai/yolo/activate")
+def activate_yolo(db: Session = Depends(get_db)):
+    """注册并激活本地YOLO模型"""
+    try:
+        from yolo_detector import is_model_available, get_model_info
+    except ImportError:
+        raise HTTPException(status_code=400, detail="YOLO模块未安装，请安装onnxruntime和pillow")
+
+    if not is_model_available():
+        raise HTTPException(status_code=400, detail="未找到YOLO模型文件，请先训练模型并导出ONNX到models/目录")
+
+    info = get_model_info()
+
+    # 查找或创建YOLO模型配置
+    yolo_model = db.query(AIModelConfig).filter(AIModelConfig.provider == "yolo_local").first()
+    if yolo_model:
+        yolo_model.name = "本地YOLO模型"
+        yolo_model.model_name = "engine_safety.onnx"
+    else:
+        yolo_model = AIModelConfig(
+            name="本地YOLO模型",
+            provider="yolo_local",
+            api_key="",
+            base_url="",
+            model_name="engine_safety.onnx",
+            temperature=0.0,
+            max_tokens=0,
+        )
+        db.add(yolo_model)
+
+    # 激活YOLO模型
+    db.query(AIModelConfig).update({AIModelConfig.is_active: 0})
+    yolo_model.is_active = 1
+    db.commit()
+    db.refresh(yolo_model)
+
+    return {"code": 200, "data": {
+        "id": yolo_model.id,
+        "name": yolo_model.name,
+        "model_info": info,
+    }}
 
 # --- 知识库配置 ---
 

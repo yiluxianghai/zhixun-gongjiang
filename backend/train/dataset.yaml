@@ -1,0 +1,37 @@
+# YOLOv8 数据集配置文件
+# 工程安全违规与质量缺陷检测数据集
+
+# 数据集路径（相对于此文件）
+path: ./dataset  # 数据集根目录
+train: images/train  # 训练集图片（相对于path）
+val: images/val  # 验证集图片
+test: images/test  # 测试集图片（可选）
+
+# 检测类别定义
+# ┌─────────────────────────────────────────────────────────┐
+# │ 类别ID │ 类别名               │ 中文含义               │
+# ├────────┼──────────────────────┼────────────────────────┤
+# │   0    │ person_no_helmet     │ 未戴安全帽             │
+# │   1    │ person_no_vest       │ 未穿反光衣/马甲        │
+# │   2    │ person_no_belt       │ 未系安全带             │
+# │   3    │ crack                │ 裂缝                   │
+# │   4    │ rebar_exposure       │ 钢筋外露               │
+# │   5    │ spalling             │ 剥落/蜂窝麻面          │
+# │   6    │ water_seepage        │ 渗水                   │
+# │   7    │ edge_protection      │ 临边防护缺失           │
+# │   8    │ formwork_issue       │ 模板支撑问题           │
+# │   9    │ material_disorder    │ 材料堆放不规范         │
+# └─────────────────────────────────────────────────────────┘
+
+nc: 10  # 类别数量
+names:
+  0: person_no_helmet
+  1: person_no_vest
+  2: person_no_belt
+  3: crack
+  4: rebar_exposure
+  5: spalling
+  6: water_seepage
+  7: edge_protection
+  8: formwork_issue
+  9: material_disorder

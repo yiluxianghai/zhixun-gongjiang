@@ -191,6 +191,10 @@ export const api = {
   activateModel: (id: number) =>
     request(`/ai/models/${id}/activate`, { method: 'POST' }),
 
+  // 本地YOLO模型
+  getYoloStatus: () => request<YoloModelInfo>('/ai/yolo-status'),
+  activateYolo: () => request('/ai/yolo/activate', { method: 'POST' }),
+
   // 知识库配置
   getKnowledgeBases: () => request<KnowledgeBaseConfig[]>('/ai/knowledge-bases'),
   getKnowledgeBase: (id: number) => request<KnowledgeBaseConfig & { content: string }>(`/ai/knowledge-bases/${id}`),
@@ -342,3 +346,12 @@ export const api = {
   generateAnalysisReport: (projectId: number) =>
     request(`/documents/analysis-report?project_id=${projectId}`, { method: 'POST' }),
 };
+
+export interface YoloModelInfo {
+  available: boolean;
+  model_path?: string;
+  model_size_mb?: number;
+  num_classes?: number;
+  classes?: { id: number; name: string; type: string }[];
+  error?: string;
+}

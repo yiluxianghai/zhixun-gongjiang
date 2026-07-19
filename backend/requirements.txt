@@ -8,3 +8,6 @@ openpyxl==3.1.5
 pdfplumber==0.11.10
 python-docx==1.2.0
 numpy>=1.24.0,<3.0.0
+# YOLO图片识别推理依赖（仅推理，不含训练）
+onnxruntime>=1.16.0
+Pillow>=10.0.0
