@@ -157,8 +157,9 @@ async def call_llm(
     temperature: float = 0.3,
     system_prompt: str = None,
     user_prompt_template: str = None,
+    rag_context: str = None,
 ) -> Optional[dict]:
-    """调用LLM进行智能分析（支持动态配置）"""
+    """调用LLM进行智能分析（支持动态配置 + RAG上下文）"""
     _api_key = api_key or LLM_API_KEY
     _base_url = base_url or LLM_BASE_URL
     _model = model or LLM_MODEL
@@ -167,6 +168,14 @@ async def call_llm(
 
     if not _api_key or not _model:
         return None
+
+    # 构建用户消息内容（注入RAG上下文）
+    user_content = _usr_prompt.format(
+        inspection_area=inspection_area,
+        raw_description=raw_description
+    )
+    if rag_context:
+        user_content = f"【知识库参考内容】\n以下是从知识库中检索到的相关规范和参考内容，请结合这些内容进行分析：\n\n{rag_context}\n\n---\n\n{user_content}"
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -180,10 +189,7 @@ async def call_llm(
                     "model": _model,
                     "messages": [
                         {"role": "system", "content": _sys_prompt},
-                        {"role": "user", "content": _usr_prompt.format(
-                            inspection_area=inspection_area,
-                            raw_description=raw_description
-                        )}
+                        {"role": "user", "content": user_content}
                     ],
                     "temperature": temperature,
                 }
@@ -295,18 +301,20 @@ async def analyze_problem(
     model_config: dict = None,
     kb_content: dict = None,
     skill: dict = None,
+    rag_context: str = None,
 ) -> dict:
     """
-    智能分析入口（支持动态配置）
+    智能分析入口（支持动态配置 + RAG）
     
     Args:
         raw_description: 原始问题描述
         inspection_area: 巡视区域
         model_config: AI模型配置 {provider, api_key, base_url, model_name, temperature}
-        kb_content: 知识库内容字典（为None时用全局kb）
+        kb_content: 知识库内容字典（为None时用全局kb，用于规则引擎分类）
         skill: 分析技能 {system_prompt, user_prompt_template}
+        rag_context: RAG检索到的上下文文本（来自文档知识库）
     """
-    # 选择知识库
+    # 选择知识库（用于规则引擎的分类/模板匹配）
     _kb = KnowledgeBase(content=kb_content) if kb_content else kb
 
     # 解析模型配置
@@ -329,13 +337,14 @@ async def analyze_problem(
         _sys_prompt = skill.get("system_prompt")
         _usr_prompt = skill.get("user_prompt_template")
 
-    # 如果配置了API key且不是规则引擎，尝试LLM
+    # 如果配置了API key且不是规则引擎，尝试LLM（注入RAG上下文）
     if _provider != "rule_engine" and _api_key:
         llm_result = await call_llm(
             raw_description, inspection_area,
             api_key=_api_key, base_url=_base_url, model=_model,
             temperature=_temperature,
             system_prompt=_sys_prompt, user_prompt_template=_usr_prompt,
+            rag_context=rag_context,
         )
         if llm_result:
             # 补充规则引擎的补充信息
@@ -345,7 +354,7 @@ async def analyze_problem(
                 risk_level, _ = _kb.determine_risk_level(text, cat_code)
                 risk_rule = _kb.get_risk_rule(risk_level)
                 llm_result["rectification_deadline_days"] = risk_rule["deadline_days"]
-            print(f"[AI引擎] LLM分析完成，置信度: {llm_result.get('confidence', 'N/A')}")
+            print(f"[AI引擎] LLM分析完成（RAG={"有" if rag_context else "无"}），置信度: {llm_result.get("confidence", "N/A")}")
             return llm_result
 
     # 使用规则引擎

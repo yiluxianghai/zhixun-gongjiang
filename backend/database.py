@@ -147,6 +147,35 @@ class AnalysisSkill(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class KnowledgeDocument(Base):
+    """知识库文档表（RAG文档管理）"""
+    __tablename__ = "knowledge_documents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    kb_id = Column(Integer, ForeignKey("kb_configs.id"), nullable=False)  # 关联知识库
+    filename = Column(String(255), nullable=False)  # 原始文件名
+    file_path = Column(String(500), nullable=False)  # 存储路径
+    file_type = Column(String(20), nullable=False)  # pdf/docx/txt
+    file_size = Column(Integer, default=0)  # 文件大小(字节)
+    text_content = Column(Text, default="")  # 提取的全文文本
+    chunk_count = Column(Integer, default=0)  # 分块数量
+    status = Column(String(20), default="processing")  # processing/ready/error
+    error_message = Column(Text, default="")  # 处理错误信息
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class DocumentChunk(Base):
+    """文档分块表（RAG向量检索）"""
+    __tablename__ = "document_chunks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    doc_id = Column(Integer, ForeignKey("knowledge_documents.id"), nullable=False)
+    chunk_index = Column(Integer, default=0)  # 分块序号
+    content = Column(Text, nullable=False)  # 分块文本内容
+    embedding = Column(Text, default="")  # JSON格式的嵌入向量
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 def init_db():
     """初始化数据库"""
     Base.metadata.create_all(bind=engine)

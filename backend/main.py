@@ -22,8 +22,10 @@ from database import (
     init_db, get_db, Project, InspectionProblem, RectificationRecord,
     OutputDocument, generate_problem_no, get_next_seq,
     AIModelConfig, KnowledgeBaseConfig, AnalysisSkill,
+    KnowledgeDocument, DocumentChunk,
 )
 from ai_engine import analyze_problem
+from rag_engine import process_document, retrieve_context, build_rag_context
 from document_generator import (
     generate_notice, generate_inspection_record,
     generate_ledger, generate_analysis_report
@@ -48,6 +50,10 @@ app.add_middleware(
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
+# 知识库文档存储目录
+KB_DOCS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "kb_docs")
+os.makedirs(KB_DOCS_DIR, exist_ok=True)
 
 
 # ========== Pydantic 模型 ==========
@@ -168,7 +174,7 @@ def list_projects(db: Session = Depends(get_db)):
 
 @app.post("/api/problems/analyze")
 async def analyze_problem_api(req: ProblemAnalyzeRequest, db: Session = Depends(get_db)):
-    """AI智能分析问题（核心接口，支持动态配置）"""
+    """AI智能分析问题（核心接口，支持动态配置 + RAG检索）"""
     # 获取模型配置
     model_config = None
     if req.model_id:
@@ -184,7 +190,7 @@ async def analyze_problem_api(req: ProblemAnalyzeRequest, db: Session = Depends(
                             "base_url": m.base_url, "model_name": m.model_name,
                             "temperature": m.temperature}
 
-    # 获取知识库
+    # 获取知识库配置
     kb_content = None
     kb_id = req.kb_id
     if not kb_id:
@@ -209,9 +215,40 @@ async def analyze_problem_api(req: ProblemAnalyzeRequest, db: Session = Depends(
         if s:
             skill = {"system_prompt": s.system_prompt, "user_prompt_template": s.user_prompt_template}
 
+    # RAG检索：从知识库文档中检索相关内容
+    rag_context = None
+    if kb_id:
+        # 查询该知识库下所有已处理完成的文档分块
+        docs = db.query(KnowledgeDocument).filter(
+            KnowledgeDocument.kb_id == kb_id,
+            KnowledgeDocument.status == "ready",
+        ).all()
+        
+        if docs:
+            doc_ids = [d.id for d in docs]
+            chunks = db.query(DocumentChunk).filter(DocumentChunk.doc_id.in_(doc_ids)).all()
+            
+            if chunks:
+                # 构建查询文本
+                query_text = f"{req.raw_description} {req.inspection_area}"
+                
+                # 获取用于嵌入的API配置
+                emb_api_key = model_config.get("api_key", "") if model_config else ""
+                emb_base_url = model_config.get("base_url", "") if model_config else ""
+                
+                chunks_data = [{"content": c.content, "embedding": c.embedding} for c in chunks]
+                retrieved = await retrieve_context(
+                    query_text, chunks_data,
+                    api_key=emb_api_key, base_url=emb_base_url,
+                    top_k=5,
+                )
+                rag_context = build_rag_context(retrieved)
+                print(f"[RAG] 检索完成，上下文长度: {len(rag_context) if rag_context else 0} 字符")
+
     result = await analyze_problem(
         req.raw_description, req.inspection_area,
         model_config=model_config, kb_content=kb_content, skill=skill,
+        rag_context=rag_context,
     )
     return {"code": 200, "data": result}
 
@@ -860,6 +897,111 @@ def activate_kb(kb_id: int, db: Session = Depends(get_db)):
     kb.is_active = 1
     db.commit()
     return {"code": 200, "data": {"id": kb_id}}
+
+# --- 知识库文档管理（RAG） ---
+
+@app.post("/api/ai/knowledge-bases/{kb_id}/documents")
+async def upload_document(
+    kb_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """上传知识库文档（PDF/DOCX/TXT），自动处理为RAG可用的分块"""
+    kb = db.query(KnowledgeBaseConfig).filter(KnowledgeBaseConfig.id == kb_id).first()
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+
+    # 验证文件类型
+    filename = file.filename or "unknown"
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in ("pdf", "docx", "doc", "txt"):
+        raise HTTPException(status_code=400, detail=f"不支持的文件类型: .{ext}，仅支持 PDF/DOCX/TXT")
+
+    # 保存文件
+    file_content = await file.read()
+    stored_filename = f"{uuid.uuid4().hex}.{ext}"
+    file_path = os.path.join(KB_DOCS_DIR, stored_filename)
+    with open(file_path, "wb") as f:
+        f.write(file_content)
+
+    # 创建文档记录
+    doc = KnowledgeDocument(
+        kb_id=kb_id,
+        filename=filename,
+        file_path=file_path,
+        file_type=ext,
+        file_size=len(file_content),
+        status="processing",
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+
+    # 获取模型API配置（用于生成嵌入向量）
+    active_model = db.query(AIModelConfig).filter(AIModelConfig.is_active == 1).first()
+    emb_api_key = active_model.api_key if active_model else ""
+    emb_base_url = active_model.base_url if active_model else ""
+
+    # 异步处理文档（提取文本→分块→嵌入→存储）
+    try:
+        await process_document(
+            file_path=file_path,
+            file_type=ext,
+            doc_id=doc.id,
+            kb_id=kb_id,
+            db_session=db,
+            api_key=emb_api_key,
+            base_url=emb_base_url,
+        )
+    except Exception as e:
+        # 处理失败不影㘿上传，记录错误
+        print(f"[文档上传] 处理失败: {e}")
+
+    # 重新查询获取最新状态
+    db.refresh(doc)
+    return {"code": 200, "data": {
+        "id": doc.id, "filename": doc.filename, "file_type": doc.file_type,
+        "file_size": doc.file_size, "chunk_count": doc.chunk_count,
+        "status": doc.status, "error_message": doc.error_message,
+    }}
+
+
+@app.get("/api/ai/knowledge-bases/{kb_id}/documents")
+def list_documents(kb_id: int, db: Session = Depends(get_db)):
+    """获取知识库下的所有文档"""
+    docs = db.query(KnowledgeDocument).filter(
+        KnowledgeDocument.kb_id == kb_id
+    ).order_by(KnowledgeDocument.created_at.desc()).all()
+    
+    return {"code": 200, "data": [{
+        "id": d.id, "filename": d.filename, "file_type": d.file_type,
+        "file_size": d.file_size, "chunk_count": d.chunk_count,
+        "status": d.status, "error_message": d.error_message,
+        "created_at": str(d.created_at),
+    } for d in docs]}
+
+
+@app.delete("/api/ai/knowledge-bases/{kb_id}/documents/{doc_id}")
+def delete_document(kb_id: int, doc_id: int, db: Session = Depends(get_db)):
+    """删除知识库文档及其分块"""
+    doc = db.query(KnowledgeDocument).filter(
+        KnowledgeDocument.id == doc_id,
+        KnowledgeDocument.kb_id == kb_id,
+    ).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+
+    # 删除分块记录
+    db.query(DocumentChunk).filter(DocumentChunk.doc_id == doc_id).delete()
+
+    # 删除物理文件
+    if os.path.exists(doc.file_path):
+        os.remove(doc.file_path)
+
+    # 删除文档记录
+    db.delete(doc)
+    db.commit()
+    return {"code": 200, "data": {"id": doc_id}}
 
 # --- 分析技能 ---
 

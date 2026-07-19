@@ -128,6 +128,19 @@ export interface AIConfig {
   skill: { id: number; name: string } | null;
 }
 
+// ========== RAG文档类型 ==========
+
+export interface KnowledgeDocument {
+  id: number;
+  filename: string;
+  file_type: string;
+  file_size: number;
+  chunk_count: number;
+  status: string;  // processing/ready/error
+  error_message: string;
+  created_at: string;
+}
+
 // ========== API 函数 ==========
 
 export const api = {
@@ -177,6 +190,23 @@ export const api = {
     request(`/ai/knowledge-bases/${id}`, { method: 'DELETE' }),
   activateKnowledgeBase: (id: number) =>
     request(`/ai/knowledge-bases/${id}/activate`, { method: 'POST' }),
+
+  // 知识库文档管理（RAG）
+  uploadDocument: async (kbId: number, file: File): Promise<KnowledgeDocument> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch(`${API_BASE}/ai/knowledge-bases/${kbId}/documents`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!res.ok) throw new Error(`上传失败: ${res.status}`);
+    const json = await res.json();
+    return json.data;
+  },
+  getDocuments: (kbId: number) =>
+    request<KnowledgeDocument[]>(`/ai/knowledge-bases/${kbId}/documents`),
+  deleteDocument: (kbId: number, docId: number) =>
+    request(`/ai/knowledge-bases/${kbId}/documents/${docId}`, { method: 'DELETE' }),
 
   // 分析技能
   getSkills: () => request<AnalysisSkill[]>('/ai/skills'),
