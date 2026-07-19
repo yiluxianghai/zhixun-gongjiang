@@ -128,6 +128,18 @@ export interface AIConfig {
   skill: { id: number; name: string } | null;
 }
 
+// ========== AI图片识别类型 ==========
+
+export interface ImageAnalysisResult {
+  has_issues: boolean;
+  violations: string[];
+  defects: string[];
+  risk_level: string;  // 一般/较大/重大
+  description: string;
+  recommendations: string[];
+  confidence: number;
+}
+
 // ========== RAG文档类型 ==========
 
 export interface KnowledgeDocument {
@@ -229,6 +241,20 @@ export const api = {
       body: formData,
     });
     if (!res.ok) throw new Error(`上传失败: ${res.status}`);
+    const json = await res.json();
+    return json.data;
+  },
+
+  // AI图片识别
+  analyzeImage: async (file: File, inspectionArea: string): Promise<ImageAnalysisResult> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('inspection_area', inspectionArea);
+    const res = await fetch(`${API_BASE}/ai/analyze-image`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!res.ok) throw new Error(`图片识别失败: ${res.status}`);
     const json = await res.json();
     return json.data;
   },

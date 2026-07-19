@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, date, timedelta
 from typing import Optional, List
 
-from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -24,7 +24,7 @@ from database import (
     AIModelConfig, KnowledgeBaseConfig, AnalysisSkill,
     KnowledgeDocument, DocumentChunk,
 )
-from ai_engine import analyze_problem
+from ai_engine import analyze_problem, analyze_image
 from rag_engine import process_document, retrieve_context, build_rag_context
 from document_generator import (
     generate_notice, generate_inspection_record,
@@ -309,6 +309,65 @@ def create_problem(req: ProblemCreateRequest, db: Session = Depends(get_db)):
 
 
 # ========== 图片上传 ==========
+
+@app.post("/api/ai/analyze-image")
+async def analyze_image_api(
+    file: UploadFile = File(...),
+    inspection_area: str = Form(default=""),
+    db: Session = Depends(get_db),
+):
+    """AI图片识别：分析工程现场照片，检测安全违规和质量缺陷"""
+    # 验证文件类型
+    allowed_types = ["image/jpeg", "image/png", "image/webp"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail=f"不支持的图片类型: {file.content_type}，仅支持: {', '.join(allowed_types)}")
+
+    # 读取图片并转base64
+    image_content = await file.read()
+    import base64
+    image_base64 = base64.b64encode(image_content).decode('utf-8')
+
+    # 获取激活的模型配置
+    m = db.query(AIModelConfig).filter(AIModelConfig.is_active == 1).first()
+    if not m:
+        return {"code": 200, "data": {
+            "has_issues": False,
+            "violations": [],
+            "defects": [],
+            "risk_level": "一般",
+            "description": "未配置AI模型，无法进行图片识别。请在AI配置中添加支持视觉的模型（如GPT-4o）。",
+            "recommendations": ["前往AI配置页面添加并激活支持视觉的LLM模型"],
+            "confidence": 0.0,
+        }}
+
+    model_config = {
+        "provider": m.provider,
+        "api_key": m.api_key,
+        "base_url": m.base_url,
+        "model_name": m.model_name,
+        "temperature": m.temperature,
+    }
+
+    result = await analyze_image(
+        image_base64=image_base64,
+        image_mime=file.content_type,
+        inspection_area=inspection_area,
+        model_config=model_config,
+    )
+
+    if result:
+        return {"code": 200, "data": result}
+    else:
+        return {"code": 200, "data": {
+            "has_issues": False,
+            "violations": [],
+            "defects": [],
+            "risk_level": "一般",
+            "description": "图片识别失败，可能当前模型不支持视觉分析。请确认已激活支持视觉的模型（如GPT-4o、Claude 3.5等）。",
+            "recommendations": ["在AI配置中激活支持视觉的LLM模型"],
+            "confidence": 0.0,
+        }}
+
 
 @app.post("/api/upload/photo")
 async def upload_photo(file: UploadFile = File(...)):

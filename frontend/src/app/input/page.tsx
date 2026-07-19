@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { api, type AnalysisResult, type Project, type AIModelConfig, type KnowledgeBaseConfig, type AnalysisSkill } from "@/lib/api";
+import { api, type AnalysisResult, type Project, type AIModelConfig, type KnowledgeBaseConfig, type AnalysisSkill, type ImageAnalysisResult } from "@/lib/api";
 
 type TabType = "text" | "image" | "excel";
 
@@ -37,9 +37,14 @@ export default function InputPage() {
 
   // 图片上传
   const [uploadedPhotos, setUploadedPhotos] = useState<string[]>([]);
+  const [photoFiles, setPhotoFiles] = useState<File[]>([]);  // 保存原始File对象用于AI识别
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // AI图片识别
+  const [imageAnalyzing, setImageAnalyzing] = useState(false);
+  const [imageAnalysis, setImageAnalysis] = useState<ImageAnalysisResult | null>(null);
 
   // Excel导入
   const [excelImporting, setExcelImporting] = useState(false);
@@ -81,6 +86,7 @@ export default function InputPage() {
         if (!file.type.startsWith("image/")) continue;
         const result = await api.uploadPhoto(file);
         setUploadedPhotos((prev) => [...prev, result.url]);
+        setPhotoFiles((prev) => [...prev, file]);
       }
     } catch (err) {
       setMessage(`图片上传失败: ${err instanceof Error ? err.message : String(err)}`);
@@ -106,7 +112,45 @@ export default function InputPage() {
   };
 
   const removePhoto = (url: string) => {
+    const idx = uploadedPhotos.indexOf(url);
     setUploadedPhotos((prev) => prev.filter((u) => u !== url));
+    if (idx >= 0) setPhotoFiles((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  // ========== AI图片识别 ==========
+
+  const handleImageAnalyze = async () => {
+    if (photoFiles.length === 0) {
+      setMessage("请先上传现场照片");
+      return;
+    }
+    setImageAnalyzing(true);
+    setImageAnalysis(null);
+    setMessage("");
+    try {
+      const result = await api.analyzeImage(photoFiles[0], inspectionArea || "工程现场");
+      setImageAnalysis(result);
+      if (result.has_issues) {
+        setMessage(`AI识别完成：发现${result.violations.length}个违规，${result.defects.length}个缺陷`);
+      } else if (result.confidence < 0.5) {
+        setMessage(result.description);
+      } else {
+        setMessage("AI识别完成：未发现明显问题");
+      }
+    } catch (err) {
+      setMessage(`图片识别失败: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setImageAnalyzing(false);
+    }
+  };
+
+  const applyImageAnalysisToDescription = () => {
+    if (!imageAnalysis) return;
+    const parts: string[] = [];
+    if (imageAnalysis.description) parts.push(imageAnalysis.description);
+    if (imageAnalysis.violations.length > 0) parts.push(`安全违规: ${imageAnalysis.violations.join("、")}`);
+    if (imageAnalysis.defects.length > 0) parts.push(`质量缺陷: ${imageAnalysis.defects.join("、")}`);
+    if (parts.length > 0) setRawDescription(parts.join("\n"));
   };
 
   // ========== AI分析 ==========
@@ -351,6 +395,86 @@ export default function InputPage() {
                       </div>
                     )}
                     {uploading && <p className="text-xs text-blue-500 mt-2">上传中...</p>}
+
+                    {/* AI图片识别按钮 */}
+                    {uploadedPhotos.length > 0 && (
+                      <div className="mt-3">
+                        <button
+                          onClick={handleImageAnalyze}
+                          disabled={imageAnalyzing}
+                          className="w-full px-4 py-2.5 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700 transition disabled:opacity-50 flex items-center justify-center gap-2"
+                        >
+                          {imageAnalyzing ? (
+                            <><span className="animate-spin">⏳</span> AI正在识别图片...</>
+                          ) : (
+                            <><span>🔍</span> AI图片识别（安全违规+质量缺陷）</>
+                          )}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* AI图片识别结果 */}
+                    {imageAnalysis && (
+                      <div className={`mt-3 p-4 rounded-lg border-2 ${imageAnalysis.has_issues ? 'border-orange-300 bg-orange-50' : 'border-green-300 bg-green-50'}`}>
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="text-sm font-semibold text-gray-800">AI识别结果</h4>
+                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                            imageAnalysis.risk_level === '重大' ? 'bg-red-100 text-red-700' :
+                            imageAnalysis.risk_level === '较大' ? 'bg-orange-100 text-orange-700' :
+                            'bg-yellow-100 text-yellow-700'
+                          }`}>
+                            风险: {imageAnalysis.risk_level}
+                          </span>
+                        </div>
+
+                        {imageAnalysis.description && (
+                          <p className="text-xs text-gray-700 mb-2 leading-relaxed">{imageAnalysis.description}</p>
+                        )}
+
+                        {imageAnalysis.violations.length > 0 && (
+                          <div className="mb-2">
+                            <p className="text-xs font-medium text-red-600 mb-1">⚠ 安全违规：</p>
+                            <div className="flex flex-wrap gap-1">
+                              {imageAnalysis.violations.map((v, i) => (
+                                <span key={i} className="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs">{v}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {imageAnalysis.defects.length > 0 && (
+                          <div className="mb-2">
+                            <p className="text-xs font-medium text-orange-600 mb-1">🔧 质量缺陷：</p>
+                            <div className="flex flex-wrap gap-1">
+                              {imageAnalysis.defects.map((d, i) => (
+                                <span key={i} className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded text-xs">{d}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {imageAnalysis.recommendations.length > 0 && (
+                          <div className="mb-2">
+                            <p className="text-xs font-medium text-blue-600 mb-1">📋 整改建议：</p>
+                            <ul className="text-xs text-gray-600 space-y-0.5">
+                              {imageAnalysis.recommendations.map((r, i) => (
+                                <li key={i}>• {r}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between mt-3 pt-2 border-t border-gray-200">
+                          <span className="text-xs text-gray-400">置信度: {(imageAnalysis.confidence * 100).toFixed(0)}%</span>
+                          <button
+                            onClick={applyImageAnalysisToDescription}
+                            className="px-3 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 transition"
+                          >
+                            填入描述 ↓
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 

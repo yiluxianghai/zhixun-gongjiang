@@ -362,3 +362,102 @@ async def analyze_problem(
     # 使用规则引擎
     print("[AI引擎] 使用规则引擎进行分析")
     return rule_based_analysis(raw_description, inspection_area, _kb)
+
+
+# ========== 图片AI识别（Vision） ==========
+
+VISION_SYSTEM_PROMPT = """你是一位资深的工程监理专家，擅长通过现场照片识别工程安全违规和质量缺陷。
+
+请仔细分析图片中的工程现场情况，识别以下内容：
+1. 安全违规：未戴安全帽、未穿反光衣/马甲、未系安全带、危险作业、临边防护缺失等
+2. 质量缺陷：裂缝、剥落、钢筋外露、渗水、变形、蜂窝麻面、模板支撑不稳等
+3. 文明施工：现场混乱、材料堆放不规范、扬尘、积水等
+
+请返回严格的JSON格式（不要包含其他文字）：
+{
+  "has_issues": true,
+  "violations": ["未佩戴安全帽", "未穿反光马甲"],
+  "defects": ["混凝土表面裂缝"],
+  "risk_level": "较大",
+  "description": "图片中观察到的详细情况描述",
+  "recommendations": ["立即要求相关人员佩戴安全帽", "对裂缝部位进行检测评估"],
+  "confidence": 0.85
+}
+
+如果图片与工程无关或无法识别，返回：
+{"has_issues": false, "violations": [], "defects": [], "risk_level": "一般", "description": "无法识别工程相关内容", "recommendations": [], "confidence": 0.3}
+
+risk_level取值：一般/较大/重大
+confidence取值：0.0-1.0"""
+
+
+async def analyze_image(
+    image_base64: str,
+    image_mime: str,
+    inspection_area: str,
+    model_config: dict = None,
+) -> Optional[dict]:
+    """
+    图片AI识别：使用LLM Vision能力分析工程现场照片
+    
+    Args:
+        image_base64: 图片的base64编码（不含data:前缀）
+        image_mime: 图片MIME类型（如 image/jpeg）
+        inspection_area: 巡视区域描述
+        model_config: AI模型配置 {provider, api_key, base_url, model_name, temperature}
+    
+    Returns:
+        分析结果dict，或None（无可用模型时）
+    """
+    if not model_config:
+        return None
+
+    _api_key = model_config.get('api_key', '')
+    _base_url = model_config.get('base_url', '') or LLM_BASE_URL
+    _model = model_config.get('model_name', '') or 'gpt-4o'
+    _temperature = model_config.get('temperature', 0.3)
+    _provider = model_config.get('provider', '')
+
+    if not _api_key or _provider == 'rule_engine':
+        return None
+
+    # 构建用户消息（多模态：文本+图片）
+    user_text = f'巡视区域：{inspection_area}\n请分析这张工程现场照片，识别安全违规和质量缺陷。'
+
+    data_url = f'data:{image_mime};base64,{image_base64}'
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f'{_base_url}/chat/completions',
+                headers={
+                    'Authorization': f'Bearer {_api_key}',
+                    'Content-Type': 'application/json',
+                },
+                json={
+                    'model': _model,
+                    'messages': [
+                        {'role': 'system', 'content': VISION_SYSTEM_PROMPT},
+                        {'role': 'user', 'content': [
+                            {'type': 'text', 'text': user_text},
+                            {'type': 'image_url', 'image_url': {'url': data_url}},
+                        ]},
+                    ],
+                    'temperature': _temperature,
+                    'max_tokens': 1500,
+                },
+            )
+            response.raise_for_status()
+            result = response.json()
+            content = result['choices'][0]['message']['content']
+
+            # 提取JSON
+            json_match = re.search(r'\{[\s\S]*\}', content)
+            if json_match:
+                parsed = json.loads(json_match.group())
+                print(f"[AI引擎] 图片识别完成，发现{len(parsed.get('violations', []))}个违规，{len(parsed.get('defects', []))}个缺陷")
+                return parsed
+            return None
+    except Exception as e:
+        print(f'[AI引擎] 图片识别失败: {e}')
+        return None
