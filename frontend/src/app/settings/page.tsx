@@ -21,8 +21,8 @@ export default function SettingsPage() {
   // 知识库文档
   const [documents, setDocuments] = useState<Record<number, KnowledgeDocument[]>>({});  // {kbId: docs}
   const [uploadingKbId, setUploadingKbId] = useState<number | null>(null);
-  const [expandedKbId, setExpandedKbId] = useState<number | null>(null);
-  const docFileRef = useRef<HTMLInputElement>(null);
+  // 每个知识库独立的文件输入ref，避免共享ref导致只能操作最后一个KB
+  const docFileRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
   // 技能
   const [skills, setSkills] = useState<AnalysisSkill[]>([]);
@@ -276,9 +276,8 @@ export default function SettingsPage() {
             {knowledgeBases.map((kb) => (
               <div key={kb.id} className={`card p-4 ${kb.is_active ? "ring-2 ring-blue-400" : ""}`}>
                 <div className="flex items-start justify-between">
-                  <div className="flex-1 cursor-pointer" onClick={() => setExpandedKbId(expandedKbId === kb.id ? null : kb.id)}>
+                  <div className="flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-gray-400">{expandedKbId === kb.id ? "▼" : "▶"}</span>
                       <h4 className="text-sm font-semibold text-gray-800">{kb.name}</h4>
                       {kb.is_active && (
                         <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs font-medium">已激活</span>
@@ -293,19 +292,30 @@ export default function SettingsPage() {
                       <p className="mt-1 text-xs text-gray-500 ml-5">{kb.description}</p>
                     )}
                   </div>
-                  <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex gap-2">
                     {!kb.is_active && (
                       <button
                         onClick={async () => {
-                          await api.activateKnowledgeBase(kb.id);
-                          setMessage(`已激活知识库: ${kb.name}`);
-                          loadData();
+                          try {
+                            await api.activateKnowledgeBase(kb.id);
+                            setMessage(`已激活知识库: ${kb.name}`);
+                            loadData();
+                          } catch (err) {
+                            setMessage(`激活失败: ${err instanceof Error ? err.message : String(err)}`);
+                          }
                         }}
                         className="px-3 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700 transition"
                       >
                         激活
                       </button>
                     )}
+                    <button
+                      onClick={() => docFileRefs.current[kb.id]?.click()}
+                      className="px-3 py-1 bg-blue-50 text-blue-600 border border-blue-300 rounded text-xs hover:bg-blue-100 transition"
+                      disabled={uploadingKbId === kb.id}
+                    >
+                      {uploadingKbId === kb.id ? "处理中..." : "📎 上传文档"}
+                    </button>
                     <button
                       onClick={() => { setEditingKB(kb); setShowKBForm(true); }}
                       className="px-3 py-1 border border-gray-300 rounded text-xs text-gray-600 hover:bg-gray-50 transition"
@@ -327,96 +337,95 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                {/* 展开后显示文档列表 */}
-                {expandedKbId === kb.id && (
-                  <div className="mt-4 ml-5 space-y-3 border-t border-gray-100 pt-3">
-                    {/* 上传区域 */}
-                    <div
-                      onClick={() => docFileRef.current?.click()}
-                      className="border-2 border-dashed border-gray-300 hover:border-blue-400 rounded-lg p-4 text-center cursor-pointer transition bg-gray-50"
-                    >
-                      {uploadingKbId === kb.id ? (
-                        <p className="text-sm text-blue-600">正在上传并处理文档...</p>
-                      ) : (
-                        <>
-                          <div className="text-2xl mb-1">📎</div>
-                          <p className="text-sm text-gray-600">点击上传PDF/DOCX/TXT文档</p>
-                          <p className="text-xs text-gray-400 mt-1">系统将自动提取文本、分块、生成向量嵌入</p>
-                        </>
-                      )}
-                      <input
-                        ref={docFileRef}
-                        type="file"
-                        accept=".pdf,.docx,.doc,.txt"
-                        className="hidden"
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0];
-                          if (!file) return;
-                          setUploadingKbId(kb.id);
-                          setMessage("");
-                          try {
-                            const result = await api.uploadDocument(kb.id, file);
-                            setMessage(`文档「${result.filename}」已处理：${result.chunk_count}个分块，状态：${result.status === "ready" ? "就绪" : result.status === "error" ? "错误" : "处理中"}`);
-                            // 重新加载文档列表
-                            const docs = await api.getDocuments(kb.id);
-                            setDocuments((prev) => ({ ...prev, [kb.id]: docs }));
-                          } catch (err) {
-                            setMessage(`文档上传失败: ${err instanceof Error ? err.message : String(err)}`);
-                          } finally {
-                            setUploadingKbId(null);
-                            if (docFileRef.current) docFileRef.current.value = "";
-                          }
-                        }}
-                      />
-                    </div>
+                {/* 文档管理区域（始终可见） */}
+                <div className="mt-4 space-y-3 border-t border-gray-100 pt-3">
+                  {/* 上传区域 */}
+                  <div
+                    onClick={() => docFileRefs.current[kb.id]?.click()}
+                    className="border-2 border-dashed border-gray-300 hover:border-blue-400 rounded-lg p-4 text-center cursor-pointer transition bg-gray-50"
+                  >
+                    {uploadingKbId === kb.id ? (
+                      <p className="text-sm text-blue-600">正在上传并处理文档...</p>
+                    ) : (
+                      <>
+                        <div className="text-2xl mb-1">📎</div>
+                        <p className="text-sm text-gray-600">点击上传PDF/DOCX/TXT文档</p>
+                        <p className="text-xs text-gray-400 mt-1">系统将自动提取文本、分块、生成向量嵌入</p>
+                      </>
+                    )}
+                    <input
+                      ref={(el) => { docFileRefs.current[kb.id] = el; }}
+                      type="file"
+                      accept=".pdf,.docx,.doc,.txt"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        setUploadingKbId(kb.id);
+                        setMessage("");
+                        try {
+                          const result = await api.uploadDocument(kb.id, file);
+                          setMessage(`文档「${result.filename}」已处理：${result.chunk_count}个分块，状态：${result.status === "ready" ? "就绪" : result.status === "error" ? "错误" : "处理中"}`);
+                          // 重新加载文档列表
+                          const docs = await api.getDocuments(kb.id);
+                          setDocuments((prev) => ({ ...prev, [kb.id]: docs }));
+                        } catch (err) {
+                          setMessage(`文档上传失败: ${err instanceof Error ? err.message : String(err)}`);
+                        } finally {
+                          setUploadingKbId(null);
+                          const el = docFileRefs.current[kb.id];
+                          if (el) el.value = "";
+                        }
+                      }}
+                    />
+                  </div>
 
-                    {/* 文档列表 */}
-                    {documents[kb.id]?.length > 0 ? (
-                      <div className="space-y-2">
-                        {documents[kb.id].map((doc) => (
-                          <div key={doc.id} className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg">
-                            <div className="flex items-center gap-2 flex-1">
-                              <span className="text-lg">
-                                {doc.file_type === "pdf" ? "📕" : doc.file_type === "docx" || doc.file_type === "doc" ? "📘" : "📄"}
-                              </span>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm text-gray-700 truncate">{doc.filename}</p>
-                                <div className="flex items-center gap-3 text-xs text-gray-400">
-                                  <span>{(doc.file_size / 1024).toFixed(1)} KB</span>
-                                  <span>{doc.chunk_count} 个分块</span>
-                                  {doc.status === "ready" && (
-                                    <span className="text-green-600">✓ 就绪</span>
-                                  )}
-                                  {doc.status === "processing" && (
-                                    <span className="text-blue-600">处理中...</span>
-                                  )}
-                                  {doc.status === "error" && (
-                                    <span className="text-red-600" title={doc.error_message}>✗ 处理失败</span>
-                                  )}
-                                </div>
+                  {/* 文档列表 */}
+                  {documents[kb.id]?.length > 0 ? (
+                    <div className="space-y-2">
+                      {documents[kb.id].map((doc) => (
+                        <div key={doc.id} className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg">
+                          <div className="flex items-center gap-2 flex-1">
+                            <span className="text-lg">
+                              {doc.file_type === "pdf" ? "📕" : doc.file_type === "docx" || doc.file_type === "doc" ? "📘" : "📄"}
+                            </span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm text-gray-700 truncate">{doc.filename}</p>
+                              <div className="flex items-center gap-3 text-xs text-gray-400">
+                                <span>{(doc.file_size / 1024).toFixed(1)} KB</span>
+                                <span>{doc.chunk_count} 个分块</span>
+                                {doc.status === "ready" && (
+                                  <span className="text-green-600">✓ 就绪</span>
+                                )}
+                                {doc.status === "processing" && (
+                                  <span className="text-blue-600">处理中...</span>
+                                )}
+                                {doc.status === "error" && (
+                                  <span className="text-red-600" title={doc.error_message}>✗ 处理失败</span>
+                                )}
                               </div>
                             </div>
-                            <button
-                              onClick={async () => {
-                                if (confirm(`确认删除文档「${doc.filename}」？`)) {
-                                  await api.deleteDocument(kb.id, doc.id);
-                                  const docs = await api.getDocuments(kb.id);
-                                  setDocuments((prev) => ({ ...prev, [kb.id]: docs }));
-                                  setMessage("文档已删除");
-                                }
-                              }}
-                              className="px-2 py-1 border border-red-300 text-red-600 rounded text-xs hover:bg-red-50 transition"
-                            >
-                              删除
-                            </button>
                           </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-gray-400 text-center py-2">暂无文档，上传PDF/DOCX文件后将自动处理</p>
-                    )}
-                  </div>
-                )}
+                          <button
+                            onClick={async () => {
+                              if (confirm(`确认删除文档「${doc.filename}」？`)) {
+                                await api.deleteDocument(kb.id, doc.id);
+                                const docs = await api.getDocuments(kb.id);
+                                setDocuments((prev) => ({ ...prev, [kb.id]: docs }));
+                                setMessage("文档已删除");
+                              }
+                            }}
+                            className="px-2 py-1 border border-red-300 text-red-600 rounded text-xs hover:bg-red-50 transition"
+                          >
+                            删除
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-400 text-center py-2">暂无文档，点击上方区域上传PDF/DOCX文件</p>
+                  )}
+                </div>
               </div>
             ))}
             {knowledgeBases.length === 0 && (
