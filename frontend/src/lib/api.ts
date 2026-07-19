@@ -88,6 +88,46 @@ export interface Dashboard {
   closure_rate: number;
 }
 
+// ========== AI配置类型 ==========
+
+export interface AIModelConfig {
+  id: number;
+  name: string;
+  provider: string;
+  api_key: string;
+  base_url: string;
+  model_name: string;
+  temperature: number;
+  max_tokens: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface KnowledgeBaseConfig {
+  id: number;
+  name: string;
+  description: string;
+  is_active: boolean;
+  created_at: string;
+  content?: string;
+}
+
+export interface AnalysisSkill {
+  id: number;
+  name: string;
+  description: string;
+  is_active: boolean;
+  created_at: string;
+  system_prompt?: string;
+  user_prompt_template?: string;
+}
+
+export interface AIConfig {
+  model: { id: number; name: string; provider: string; model_name: string } | null;
+  knowledge_base: { id: number; name: string } | null;
+  skill: { id: number; name: string } | null;
+}
+
 // ========== API 函数 ==========
 
 export const api = {
@@ -103,10 +143,52 @@ export const api = {
     inspector: string;
     inspection_date: string;
     raw_description: string;
+    model_id?: number;
+    kb_id?: number;
+    skill_id?: number;
   }) => request<AnalysisResult>('/problems/analyze', {
     method: 'POST',
     body: JSON.stringify(data),
   }),
+
+  // ========== AI配置管理 ==========
+
+  getAIConfig: () => request<AIConfig>('/ai/config'),
+
+  // 模型配置
+  getModels: () => request<AIModelConfig[]>('/ai/models'),
+  createModel: (data: Omit<AIModelConfig, 'id' | 'is_active' | 'created_at'>) =>
+    request('/ai/models', { method: 'POST', body: JSON.stringify(data) }),
+  updateModel: (id: number, data: Omit<AIModelConfig, 'id' | 'is_active' | 'created_at'>) =>
+    request(`/ai/models/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteModel: (id: number) =>
+    request(`/ai/models/${id}`, { method: 'DELETE' }),
+  activateModel: (id: number) =>
+    request(`/ai/models/${id}/activate`, { method: 'POST' }),
+
+  // 知识库配置
+  getKnowledgeBases: () => request<KnowledgeBaseConfig[]>('/ai/knowledge-bases'),
+  getKnowledgeBase: (id: number) => request<KnowledgeBaseConfig & { content: string }>(`/ai/knowledge-bases/${id}`),
+  createKnowledgeBase: (data: { name: string; description: string; content: string }) =>
+    request('/ai/knowledge-bases', { method: 'POST', body: JSON.stringify(data) }),
+  updateKnowledgeBase: (id: number, data: { name: string; description: string; content: string }) =>
+    request(`/ai/knowledge-bases/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteKnowledgeBase: (id: number) =>
+    request(`/ai/knowledge-bases/${id}`, { method: 'DELETE' }),
+  activateKnowledgeBase: (id: number) =>
+    request(`/ai/knowledge-bases/${id}/activate`, { method: 'POST' }),
+
+  // 分析技能
+  getSkills: () => request<AnalysisSkill[]>('/ai/skills'),
+  getSkill: (id: number) => request<AnalysisSkill & { system_prompt: string; user_prompt_template: string }>(`/ai/skills/${id}`),
+  createSkill: (data: { name: string; description: string; system_prompt: string; user_prompt_template: string }) =>
+    request('/ai/skills', { method: 'POST', body: JSON.stringify(data) }),
+  updateSkill: (id: number, data: { name: string; description: string; system_prompt: string; user_prompt_template: string }) =>
+    request(`/ai/skills/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteSkill: (id: number) =>
+    request(`/ai/skills/${id}`, { method: 'DELETE' }),
+  activateSkill: (id: number) =>
+    request(`/ai/skills/${id}/activate`, { method: 'POST' }),
 
   // 图片上传
   uploadPhoto: async (file: File): Promise<{ url: string; filename: string; size: number }> => {

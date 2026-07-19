@@ -8,6 +8,7 @@ const navItems = [
   { href: "/input", label: "问题输入", icon: "✏️" },
   { href: "/ledger", label: "闭环台账", icon: "📋" },
   { href: "/documents", label: "成果输出", icon: "📄" },
+  { href: "/settings", label: "AI配置", icon: "⚙️" },
 ];
 
 export default function Sidebar() {

@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { api, type AnalysisResult, type Project } from "@/lib/api";
+import { api, type AnalysisResult, type Project, type AIModelConfig, type KnowledgeBaseConfig, type AnalysisSkill } from "@/lib/api";
 
 type TabType = "text" | "image" | "excel";
 
@@ -18,6 +18,14 @@ export default function InputPage() {
   const [inspector, setInspector] = useState("");
   const [inspectionDate, setInspectionDate] = useState(new Date().toISOString().slice(0, 10));
   const [rawDescription, setRawDescription] = useState("");
+
+  // AI配置选择
+  const [models, setModels] = useState<AIModelConfig[]>([]);
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseConfig[]>([]);
+  const [skills, setSkills] = useState<AnalysisSkill[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState<number | undefined>(undefined);
+  const [selectedKbId, setSelectedKbId] = useState<number | undefined>(undefined);
+  const [selectedSkillId, setSelectedSkillId] = useState<number | undefined>(undefined);
 
   // AI分析
   const [analyzing, setAnalyzing] = useState(false);
@@ -45,6 +53,21 @@ export default function InputPage() {
 
   useEffect(() => {
     api.getProjects().then(setProjects).catch(console.error);
+    // 加载AI配置
+    Promise.all([api.getModels(), api.getKnowledgeBases(), api.getSkills()])
+      .then(([m, k, s]) => {
+        setModels(m);
+        setKnowledgeBases(k);
+        setSkills(s);
+        // 默认选中已激活的配置
+        const activeModel = m.find((x) => x.is_active);
+        if (activeModel) setSelectedModelId(activeModel.id);
+        const activeKb = k.find((x) => x.is_active);
+        if (activeKb) setSelectedKbId(activeKb.id);
+        const activeSkill = s.find((x) => x.is_active);
+        if (activeSkill) setSelectedSkillId(activeSkill.id);
+      })
+      .catch(console.error);
   }, []);
 
   // ========== 图片上传 ==========
@@ -102,6 +125,9 @@ export default function InputPage() {
         inspector: inspector,
         inspection_date: inspectionDate,
         raw_description: rawDescription,
+        model_id: selectedModelId,
+        kb_id: selectedKbId,
+        skill_id: selectedSkillId,
       });
       setEditedAnalysis(result);
     } catch (err) {
@@ -359,6 +385,61 @@ export default function InputPage() {
                         {ex.slice(0, 15)}...
                       </button>
                     ))}
+                  </div>
+                </div>
+
+                {/* AI配置选择器 */}
+                <div className="border border-gray-200 rounded-lg p-3 bg-gray-50 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-gray-600">AI分析配置</span>
+                    <Link href="/settings" className="text-xs text-blue-600 hover:underline">配置管理 →</Link>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-0.5">模型</label>
+                      <select
+                        value={selectedModelId ?? ""}
+                        onChange={(e) => setSelectedModelId(e.target.value ? Number(e.target.value) : undefined)}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs bg-white"
+                      >
+                        <option value="">默认</option>
+                        {models.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name}{m.is_active ? " (激活)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-0.5">知识库</label>
+                      <select
+                        value={selectedKbId ?? ""}
+                        onChange={(e) => setSelectedKbId(e.target.value ? Number(e.target.value) : undefined)}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs bg-white"
+                      >
+                        <option value="">默认</option>
+                        {knowledgeBases.map((kb) => (
+                          <option key={kb.id} value={kb.id}>
+                            {kb.name}{kb.is_active ? " (激活)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-0.5">技能</label>
+                      <select
+                        value={selectedSkillId ?? ""}
+                        onChange={(e) => setSelectedSkillId(e.target.value ? Number(e.target.value) : undefined)}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs bg-white"
+                      >
+                        <option value="">默认</option>
+                        {skills.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}{s.is_active ? " (激活)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 </div>
 

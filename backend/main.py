@@ -20,7 +20,8 @@ import openpyxl
 
 from database import (
     init_db, get_db, Project, InspectionProblem, RectificationRecord,
-    OutputDocument, generate_problem_no, get_next_seq
+    OutputDocument, generate_problem_no, get_next_seq,
+    AIModelConfig, KnowledgeBaseConfig, AnalysisSkill,
 )
 from ai_engine import analyze_problem
 from document_generator import (
@@ -62,6 +63,29 @@ class ProblemAnalyzeRequest(BaseModel):
     inspector: str
     inspection_date: str
     raw_description: str
+    model_id: Optional[int] = None
+    kb_id: Optional[int] = None
+    skill_id: Optional[int] = None
+
+class AIModelCreate(BaseModel):
+    name: str
+    provider: str = "openai"
+    api_key: str = ""
+    base_url: str = "https://api.openai.com/v1"
+    model_name: str = "gpt-4o-mini"
+    temperature: float = 0.3
+    max_tokens: int = 2000
+
+class KBCreate(BaseModel):
+    name: str
+    description: str = ""
+    content: str = "{}"
+
+class SkillCreate(BaseModel):
+    name: str
+    description: str = ""
+    system_prompt: str = ""
+    user_prompt_template: str = ""
 
 
 class ProblemCreateRequest(BaseModel):
@@ -143,9 +167,52 @@ def list_projects(db: Session = Depends(get_db)):
 # ========== 问题分析 ==========
 
 @app.post("/api/problems/analyze")
-async def analyze_problem_api(req: ProblemAnalyzeRequest):
-    """AI智能分析问题（核心接口）"""
-    result = await analyze_problem(req.raw_description, req.inspection_area)
+async def analyze_problem_api(req: ProblemAnalyzeRequest, db: Session = Depends(get_db)):
+    """AI智能分析问题（核心接口，支持动态配置）"""
+    # 获取模型配置
+    model_config = None
+    if req.model_id:
+        m = db.query(AIModelConfig).filter(AIModelConfig.id == req.model_id).first()
+        if m:
+            model_config = {"provider": m.provider, "api_key": m.api_key,
+                            "base_url": m.base_url, "model_name": m.model_name,
+                            "temperature": m.temperature}
+    else:
+        m = db.query(AIModelConfig).filter(AIModelConfig.is_active == 1).first()
+        if m:
+            model_config = {"provider": m.provider, "api_key": m.api_key,
+                            "base_url": m.base_url, "model_name": m.model_name,
+                            "temperature": m.temperature}
+
+    # 获取知识库
+    kb_content = None
+    kb_id = req.kb_id
+    if not kb_id:
+        active_kb = db.query(KnowledgeBaseConfig).filter(KnowledgeBaseConfig.is_active == 1).first()
+        kb_id = active_kb.id if active_kb else None
+    if kb_id:
+        kb_obj = db.query(KnowledgeBaseConfig).filter(KnowledgeBaseConfig.id == kb_id).first()
+        if kb_obj:
+            try:
+                kb_content = json.loads(kb_obj.content)
+            except:
+                kb_content = None
+
+    # 获取分析技能
+    skill = None
+    skill_id = req.skill_id
+    if not skill_id:
+        active_skill = db.query(AnalysisSkill).filter(AnalysisSkill.is_active == 1).first()
+        skill_id = active_skill.id if active_skill else None
+    if skill_id:
+        s = db.query(AnalysisSkill).filter(AnalysisSkill.id == skill_id).first()
+        if s:
+            skill = {"system_prompt": s.system_prompt, "user_prompt_template": s.user_prompt_template}
+
+    result = await analyze_problem(
+        req.raw_description, req.inspection_area,
+        model_config=model_config, kb_content=kb_content, skill=skill,
+    )
     return {"code": 200, "data": result}
 
 
@@ -677,6 +744,176 @@ def gen_analysis_report(project_id: int = Query(...), db: Session = Depends(get_
 
     result = generate_analysis_report(problems, project_name)
     return {"code": 200, "data": result}
+
+
+# ========== AI配置管理 ==========
+
+@app.get("/api/ai/config")
+def get_ai_config(db: Session = Depends(get_db)):
+    """获取当前启用的AI配置"""
+    model = db.query(AIModelConfig).filter(AIModelConfig.is_active == 1).first()
+    kb = db.query(KnowledgeBaseConfig).filter(KnowledgeBaseConfig.is_active == 1).first()
+    skill = db.query(AnalysisSkill).filter(AnalysisSkill.is_active == 1).first()
+    return {"code": 200, "data": {
+        "model": {"id": model.id, "name": model.name, "provider": model.provider, "model_name": model.model_name} if model else None,
+        "knowledge_base": {"id": kb.id, "name": kb.name} if kb else None,
+        "skill": {"id": skill.id, "name": skill.name} if skill else None,
+    }}
+
+# --- AI模型配置 ---
+
+@app.get("/api/ai/models")
+def list_models(db: Session = Depends(get_db)):
+    models = db.query(AIModelConfig).order_by(AIModelConfig.created_at.desc()).all()
+    return {"code": 200, "data": [{"id": m.id, "name": m.name, "provider": m.provider,
+        "api_key": m.api_key[:8] + "****" if m.api_key and len(m.api_key) > 8 else "",
+        "base_url": m.base_url, "model_name": m.model_name,
+        "temperature": m.temperature, "max_tokens": m.max_tokens,
+        "is_active": bool(m.is_active), "created_at": str(m.created_at)} for m in models]}
+
+@app.post("/api/ai/models")
+def create_model(req: AIModelCreate, db: Session = Depends(get_db)):
+    model = AIModelConfig(**req.dict())
+    db.add(model)
+    db.commit()
+    db.refresh(model)
+    return {"code": 200, "data": {"id": model.id, "name": model.name}}
+
+@app.put("/api/ai/models/{model_id}")
+def update_model(model_id: int, req: AIModelCreate, db: Session = Depends(get_db)):
+    model = db.query(AIModelConfig).filter(AIModelConfig.id == model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail="模型配置不存在")
+    for k, v in req.dict().items():
+        setattr(model, k, v)
+    db.commit()
+    return {"code": 200, "data": {"id": model.id}}
+
+@app.delete("/api/ai/models/{model_id}")
+def delete_model(model_id: int, db: Session = Depends(get_db)):
+    model = db.query(AIModelConfig).filter(AIModelConfig.id == model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail="模型配置不存在")
+    db.delete(model)
+    db.commit()
+    return {"code": 200, "data": {"id": model_id}}
+
+@app.post("/api/ai/models/{model_id}/activate")
+def activate_model(model_id: int, db: Session = Depends(get_db)):
+    db.query(AIModelConfig).update({AIModelConfig.is_active: 0})
+    model = db.query(AIModelConfig).filter(AIModelConfig.id == model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail="模型配置不存在")
+    model.is_active = 1
+    db.commit()
+    return {"code": 200, "data": {"id": model_id}}
+
+# --- 知识库配置 ---
+
+@app.get("/api/ai/knowledge-bases")
+def list_kbs(db: Session = Depends(get_db)):
+    kbs = db.query(KnowledgeBaseConfig).order_by(KnowledgeBaseConfig.created_at.desc()).all()
+    return {"code": 200, "data": [{"id": k.id, "name": k.name, "description": k.description,
+        "is_active": bool(k.is_active), "created_at": str(k.created_at)} for k in kbs]}
+
+@app.post("/api/ai/knowledge-bases")
+def create_kb(req: KBCreate, db: Session = Depends(get_db)):
+    kb = KnowledgeBaseConfig(**req.dict())
+    db.add(kb)
+    db.commit()
+    db.refresh(kb)
+    return {"code": 200, "data": {"id": kb.id, "name": kb.name}}
+
+@app.get("/api/ai/knowledge-bases/{kb_id}")
+def get_kb(kb_id: int, db: Session = Depends(get_db)):
+    kb = db.query(KnowledgeBaseConfig).filter(KnowledgeBaseConfig.id == kb_id).first()
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    return {"code": 200, "data": {"id": kb.id, "name": kb.name, "description": kb.description,
+        "content": kb.content, "is_active": bool(kb.is_active)}}
+
+@app.put("/api/ai/knowledge-bases/{kb_id}")
+def update_kb(kb_id: int, req: KBCreate, db: Session = Depends(get_db)):
+    kb = db.query(KnowledgeBaseConfig).filter(KnowledgeBaseConfig.id == kb_id).first()
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    for k, v in req.dict().items():
+        setattr(kb, k, v)
+    db.commit()
+    return {"code": 200, "data": {"id": kb.id}}
+
+@app.delete("/api/ai/knowledge-bases/{kb_id}")
+def delete_kb(kb_id: int, db: Session = Depends(get_db)):
+    kb = db.query(KnowledgeBaseConfig).filter(KnowledgeBaseConfig.id == kb_id).first()
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    db.delete(kb)
+    db.commit()
+    return {"code": 200, "data": {"id": kb_id}}
+
+@app.post("/api/ai/knowledge-bases/{kb_id}/activate")
+def activate_kb(kb_id: int, db: Session = Depends(get_db)):
+    db.query(KnowledgeBaseConfig).update({KnowledgeBaseConfig.is_active: 0})
+    kb = db.query(KnowledgeBaseConfig).filter(KnowledgeBaseConfig.id == kb_id).first()
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    kb.is_active = 1
+    db.commit()
+    return {"code": 200, "data": {"id": kb_id}}
+
+# --- 分析技能 ---
+
+@app.get("/api/ai/skills")
+def list_skills(db: Session = Depends(get_db)):
+    skills = db.query(AnalysisSkill).order_by(AnalysisSkill.created_at.desc()).all()
+    return {"code": 200, "data": [{"id": s.id, "name": s.name, "description": s.description,
+        "is_active": bool(s.is_active), "created_at": str(s.created_at)} for s in skills]}
+
+@app.post("/api/ai/skills")
+def create_skill(req: SkillCreate, db: Session = Depends(get_db)):
+    skill = AnalysisSkill(**req.dict())
+    db.add(skill)
+    db.commit()
+    db.refresh(skill)
+    return {"code": 200, "data": {"id": skill.id, "name": skill.name}}
+
+@app.get("/api/ai/skills/{skill_id}")
+def get_skill(skill_id: int, db: Session = Depends(get_db)):
+    skill = db.query(AnalysisSkill).filter(AnalysisSkill.id == skill_id).first()
+    if not skill:
+        raise HTTPException(status_code=404, detail="分析技能不存在")
+    return {"code": 200, "data": {"id": skill.id, "name": skill.name, "description": skill.description,
+        "system_prompt": skill.system_prompt, "user_prompt_template": skill.user_prompt_template,
+        "is_active": bool(skill.is_active)}}
+
+@app.put("/api/ai/skills/{skill_id}")
+def update_skill(skill_id: int, req: SkillCreate, db: Session = Depends(get_db)):
+    skill = db.query(AnalysisSkill).filter(AnalysisSkill.id == skill_id).first()
+    if not skill:
+        raise HTTPException(status_code=404, detail="分析技能不存在")
+    for k, v in req.dict().items():
+        setattr(skill, k, v)
+    db.commit()
+    return {"code": 200, "data": {"id": skill.id}}
+
+@app.delete("/api/ai/skills/{skill_id}")
+def delete_skill(skill_id: int, db: Session = Depends(get_db)):
+    skill = db.query(AnalysisSkill).filter(AnalysisSkill.id == skill_id).first()
+    if not skill:
+        raise HTTPException(status_code=404, detail="分析技能不存在")
+    db.delete(skill)
+    db.commit()
+    return {"code": 200, "data": {"id": skill_id}}
+
+@app.post("/api/ai/skills/{skill_id}/activate")
+def activate_skill(skill_id: int, db: Session = Depends(get_db)):
+    db.query(AnalysisSkill).update({AnalysisSkill.is_active: 0})
+    skill = db.query(AnalysisSkill).filter(AnalysisSkill.id == skill_id).first()
+    if not skill:
+        raise HTTPException(status_code=404, detail="分析技能不存在")
+    skill.is_active = 1
+    db.commit()
+    return {"code": 200, "data": {"id": skill_id}}
 
 
 # ========== 健康检查 ==========

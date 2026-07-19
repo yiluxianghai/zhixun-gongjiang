@@ -30,11 +30,23 @@ LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o")
 class KnowledgeBase:
     """知识库加载与检索"""
 
-    def __init__(self):
+    def __init__(self, content: dict = None):
+        """初始化知识库
+        
+        Args:
+            content: 知识库内容字典，为None时从文件加载
+        """
         self.data = {}
-        self._load()
+        if content:
+            self.data = content
+            print(f"[知识库] 已加载(动态): {len(self.data.get('categories', []))} 个类别, "
+                  f"{len(self.data.get('specialties', []))} 个专业, "
+                  f"{len(self.data.get('rectification_templates', []))} 个整改模板")
+        else:
+            self._load()
 
     def _load(self):
+        """从文件加载知识库"""
         with open(KB_PATH, "r", encoding="utf-8") as f:
             self.data = json.load(f)
         print(f"[知识库] 已加载: {len(self.data.get('categories', []))} 个类别, "
@@ -127,72 +139,53 @@ class KnowledgeBase:
         return {"level": risk_level, "deadline_days": 7, "action": "下发整改通知，限期整改"}
 
 
-# 全局知识库实例
+# 全局知识库实例（从文件加载，作为兜底）
 kb = KnowledgeBase()
 
+# 默认提示词
+DEFAULT_SYSTEM_PROMPT = """你是一位资深的工程监理专家，具有丰富的现场巡视和质量安全管理经验。\n请根据巡视问题信息进行智能分析，返回JSON格式的分析结果。"""
 
-# ========== LLM调用 ==========
-
-SYSTEM_PROMPT = """你是一位资深的工程监理专家，具有丰富的现场巡视和质量安全管理经验。
-请根据巡视问题信息进行智能分析，返回JSON格式的分析结果。"""
-
-USER_PROMPT_TEMPLATE = """请根据以下巡视问题信息，进行智能分析和结构化输出。
-
-【巡视信息】
-- 巡视区域：{inspection_area}
-- 原始描述：{raw_description}
-
-【分类标准】
-- 问题类别：质量管理(QM)、安全管理(SM)、文明施工管理(CM)、进度管理(PM)
-- 专业类型：土建(CIV)、机电(MEP)、装饰(DEC)、消防(FIR)、幕墙(CUR)
-- 风险等级：一般、较大、重大
-
-请严格按照以下JSON格式输出（不要输出其他内容）：
-{{
-  "standardized_description": "标准化问题描述（50-100字，使用工程规范术语）",
-  "category_code": "类别代码",
-  "category_name": "类别名称",
-  "specialty_code": "专业代码",
-  "specialty_name": "专业名称",
-  "risk_level": "风险等级",
-  "risk_reason": "风险定级理由（一句话）",
-  "rectification_req": "整改要求（具体、可操作，分条列出）",
-  "rectification_deadline_days": 3,
-  "review_points": "复查要点（分条列出）",
-  "responsible_party": "建议责任主体",
-  "confidence": 0.9
-}}
-
-【注意事项】
-1. 问题描述应使用工程规范术语，避免口语化表达
-2. 整改要求应具体可操作
-3. 风险等级应根据问题严重程度和潜在影响综合判断
-4. confidence为分析置信度（0.0-1.0）"""
+DEFAULT_USER_PROMPT_TEMPLATE = """请根据以下巡视问题信息，进行智能分析和结构化输出。\n\n【巡视信息】\n- 巡视区域：{inspection_area}\n- 原始描述：{raw_description}\n\n【分类标准】\n- 问题类别：质量管理(QM)、安全管理(SM)、文明施工管理(CM)、进度管理(PM)\n- 专业类型：土建(CIV)、机电(MEP)、装饰(DEC)、消防(FIR)、幕墙(CUR)\n- 风险等级：一般、较大、重大\n\n请严格按照以下JSON格式输出（不要输出其他内容）：\n{{\n  "standardized_description": "标准化问题描述（50-100字，使用工程规范术语）",\n  "category_code": "类别代码",\n  "category_name": "类别名称",\n  "specialty_code": "专业代码",\n  "specialty_name": "专业名称",\n  "risk_level": "风险等级",\n  "risk_reason": "风险定级理由（一句话）",\n  "rectification_req": "整改要求（具体、可操作，分条列出）",\n  "rectification_deadline_days": 3,\n  "review_points": "复查要点（分条列出）",\n  "responsible_party": "建议责任主体",\n  "confidence": 0.9\n}}\n\n【注意事项】\n1. 问题描述应使用工程规范术语，避免口语化表达\n2. 整改要求应具体可操作\n3. 风险等级应根据问题严重程度和潜在影响综合判断\n4. confidence为分析置信度（0.0-1.0）"""
 
 
-async def call_llm(raw_description: str, inspection_area: str) -> Optional[dict]:
-    """调用LLM进行智能分析"""
-    if not LLM_API_KEY:
+async def call_llm(
+    raw_description: str,
+    inspection_area: str,
+    api_key: str = None,
+    base_url: str = None,
+    model: str = None,
+    temperature: float = 0.3,
+    system_prompt: str = None,
+    user_prompt_template: str = None,
+) -> Optional[dict]:
+    """调用LLM进行智能分析（支持动态配置）"""
+    _api_key = api_key or LLM_API_KEY
+    _base_url = base_url or LLM_BASE_URL
+    _model = model or LLM_MODEL
+    _sys_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
+    _usr_prompt = user_prompt_template or DEFAULT_USER_PROMPT_TEMPLATE
+
+    if not _api_key or not _model:
         return None
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                f"{LLM_BASE_URL}/chat/completions",
+                f"{_base_url}/chat/completions",
                 headers={
-                    "Authorization": f"Bearer {LLM_API_KEY}",
+                    "Authorization": f"Bearer {_api_key}",
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": LLM_MODEL,
+                    "model": _model,
                     "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": USER_PROMPT_TEMPLATE.format(
+                        {"role": "system", "content": _sys_prompt},
+                        {"role": "user", "content": _usr_prompt.format(
                             inspection_area=inspection_area,
                             raw_description=raw_description
                         )}
                     ],
-                    "temperature": 0.3,
+                    "temperature": temperature,
                 }
             )
             response.raise_for_status()
@@ -232,22 +225,23 @@ def standardize_description(raw_description: str, inspection_area: str) -> str:
     return "；".join(parts)
 
 
-def rule_based_analysis(raw_description: str, inspection_area: str) -> dict:
+def rule_based_analysis(raw_description: str, inspection_area: str, kb_instance: KnowledgeBase = None) -> dict:
     """基于规则的智能分析（LLM不可用时使用）"""
+    _kb = kb_instance or kb
     text = f"{raw_description} {inspection_area}"
 
     # 1. 分类
-    cat_code, cat_name = kb.classify_category(text)
-    spec_code, spec_name = kb.classify_specialty(text)
+    cat_code, cat_name = _kb.classify_category(text)
+    spec_code, spec_name = _kb.classify_specialty(text)
 
     # 2. 风险定级
-    risk_level, risk_reason = kb.determine_risk_level(text, cat_code)
+    risk_level, risk_reason = _kb.determine_risk_level(text, cat_code)
 
     # 3. 标准化描述
     std_desc = standardize_description(raw_description, inspection_area)
 
     # 4. 整改模板匹配
-    template = kb.match_template(text, cat_code, spec_code)
+    template = _kb.match_template(text, cat_code, spec_code)
 
     if template:
         rectification_req = template["template"]
@@ -255,7 +249,7 @@ def rule_based_analysis(raw_description: str, inspection_area: str) -> dict:
         review_points = template["review_points"]
     else:
         # 通用整改要求
-        risk_rule = kb.get_risk_rule(risk_level)
+        risk_rule = _kb.get_risk_rule(risk_level)
         rectification_req = f"1.{risk_rule['action']}；\n2.按相关规范要求进行整改；\n3.整改完成后经监理复查合格方可进行下道工序。"
         deadline_days = risk_rule["deadline_days"]
         review_points = f"1.整改措施落实情况；\n2.整改后是否符合规范要求；\n3.相关记录和资料是否齐全。"
@@ -295,25 +289,65 @@ def rule_based_analysis(raw_description: str, inspection_area: str) -> dict:
 
 # ========== 统一分析入口 ==========
 
-async def analyze_problem(raw_description: str, inspection_area: str) -> dict:
+async def analyze_problem(
+    raw_description: str,
+    inspection_area: str,
+    model_config: dict = None,
+    kb_content: dict = None,
+    skill: dict = None,
+) -> dict:
     """
-    智能分析入口：优先使用LLM，不可用时使用规则引擎
+    智能分析入口（支持动态配置）
+    
+    Args:
+        raw_description: 原始问题描述
+        inspection_area: 巡视区域
+        model_config: AI模型配置 {provider, api_key, base_url, model_name, temperature}
+        kb_content: 知识库内容字典（为None时用全局kb）
+        skill: 分析技能 {system_prompt, user_prompt_template}
     """
-    # 尝试LLM
-    llm_result = await call_llm(raw_description, inspection_area)
+    # 选择知识库
+    _kb = KnowledgeBase(content=kb_content) if kb_content else kb
 
-    if llm_result:
-        # 补充规则引擎的补充信息
-        if "rectification_deadline_days" not in llm_result:
-            text = f"{raw_description} {inspection_area}"
-            cat_code, _ = kb.classify_category(text)
-            risk_level, _ = kb.determine_risk_level(text, cat_code)
-            risk_rule = kb.get_risk_rule(risk_level)
-            llm_result["rectification_deadline_days"] = risk_rule["deadline_days"]
+    # 解析模型配置
+    _provider = "rule_engine"
+    _api_key = ""
+    _base_url = ""
+    _model = ""
+    _temperature = 0.3
+    _sys_prompt = None
+    _usr_prompt = None
 
-        print(f"[AI引擎] LLM分析完成，置信度: {llm_result.get('confidence', 'N/A')}")
-        return llm_result
-    else:
-        # 使用规则引擎
-        print("[AI引擎] 使用规则引擎进行分析")
-        return rule_based_analysis(raw_description, inspection_area)
+    if model_config:
+        _provider = model_config.get("provider", "rule_engine")
+        _api_key = model_config.get("api_key", "")
+        _base_url = model_config.get("base_url", "")
+        _model = model_config.get("model_name", "")
+        _temperature = model_config.get("temperature", 0.3)
+
+    if skill:
+        _sys_prompt = skill.get("system_prompt")
+        _usr_prompt = skill.get("user_prompt_template")
+
+    # 如果配置了API key且不是规则引擎，尝试LLM
+    if _provider != "rule_engine" and _api_key:
+        llm_result = await call_llm(
+            raw_description, inspection_area,
+            api_key=_api_key, base_url=_base_url, model=_model,
+            temperature=_temperature,
+            system_prompt=_sys_prompt, user_prompt_template=_usr_prompt,
+        )
+        if llm_result:
+            # 补充规则引擎的补充信息
+            if "rectification_deadline_days" not in llm_result:
+                text = f"{raw_description} {inspection_area}"
+                cat_code, _ = _kb.classify_category(text)
+                risk_level, _ = _kb.determine_risk_level(text, cat_code)
+                risk_rule = _kb.get_risk_rule(risk_level)
+                llm_result["rectification_deadline_days"] = risk_rule["deadline_days"]
+            print(f"[AI引擎] LLM分析完成，置信度: {llm_result.get('confidence', 'N/A')}")
+            return llm_result
+
+    # 使用规则引擎
+    print("[AI引擎] 使用规则引擎进行分析")
+    return rule_based_analysis(raw_description, inspection_area, _kb)
