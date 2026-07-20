@@ -1,0 +1,7 @@
+path: /Users/macbookpro/Desktop/智询工匠/backend/train/merged_dataset
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 13
+names: ['no_helmet', 'helmet', 'no_vest', 'vest', 'no_mask', 'mask', 'gloves', 'crack', 'spalling', 'exposed_rebar', 'rust', 'scaling', 'efflorescence']

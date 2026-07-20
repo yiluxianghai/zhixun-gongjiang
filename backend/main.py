@@ -939,10 +939,10 @@ def activate_yolo(db: Session = Depends(get_db)):
     try:
         from yolo_detector import is_model_available, get_model_info
     except ImportError:
-        raise HTTPException(status_code=400, detail="YOLO模块未安装，请安装onnxruntime和pillow")
+        raise HTTPException(status_code=400, detail="YOLO模块未安装，请确认conda环境和ultralytics已配置")
 
     if not is_model_available():
-        raise HTTPException(status_code=400, detail="未找到YOLO模型文件，请先训练模型并导出ONNX到models/目录")
+        raise HTTPException(status_code=400, detail="未找到YOLO模型文件，请确认models/engine_safety.pt已就位")
 
     info = get_model_info()
 
@@ -950,14 +950,14 @@ def activate_yolo(db: Session = Depends(get_db)):
     yolo_model = db.query(AIModelConfig).filter(AIModelConfig.provider == "yolo_local").first()
     if yolo_model:
         yolo_model.name = "本地YOLO模型"
-        yolo_model.model_name = "engine_safety.onnx"
+        yolo_model.model_name = "engine_safety.pt"
     else:
         yolo_model = AIModelConfig(
             name="本地YOLO模型",
             provider="yolo_local",
             api_key="",
             base_url="",
-            model_name="engine_safety.onnx",
+            model_name="engine_safety.pt",
             temperature=0.0,
             max_tokens=0,
         )

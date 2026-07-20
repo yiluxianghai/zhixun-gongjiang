@@ -423,7 +423,7 @@ async def analyze_image(
 
 
 async def _analyze_image_yolo(image_base64: str, inspection_area: str) -> Optional[dict]:
-    """使用本地YOLO ONNX模型检测图片"""
+    """使用本地YOLO模型检测图片（通过子进程调用ultralytics）"""
     try:
         from yolo_detector import detect_image
         import base64 as b64mod
@@ -436,7 +436,7 @@ async def _analyze_image_yolo(image_base64: str, inspection_area: str) -> Option
             print(f"[AI引擎] YOLO图片识别完成，发现{v_count}个违规，{d_count}个缺陷")
         return result
     except ImportError:
-        print('[AI引擎] YOLO模块未安装，请安装: pip install onnxruntime pillow numpy')
+        print('[AI引擎] YOLO模块未安装，请确认conda环境和ultralytics已配置')
         return None
     except Exception as e:
         print(f'[AI引擎] YOLO图片识别失败: {e}')
