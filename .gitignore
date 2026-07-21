@@ -53,6 +53,7 @@ backend/train/runs/detect/merged_safety_mps/weights/best.pt
 backend/train/runs/detect/merged_safety_5060ti/weights/epoch*.pt
 backend/train/runs/detect/merged_safety_5060ti/weights/last.pt
 backend/train/runs/detect/merged_safety_5060ti/weights/best.pt
+!backend/train/runs/detect/merged_safety_5060ti/weights/best.pt
 backend/train/runs/detect/test_run*/
 backend/train/runs/detect/runs/
 backend/train/*.log
@@ -63,3 +64,4 @@ backend/train/yolo*.pt
 
 # 模型权重（通过Git LFS管理）
 backend/models/*.pt
+!backend/models/engine_safety.pt
