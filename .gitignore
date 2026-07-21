@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+
+# Node
+node_modules/
+.next/
+frontend/out/
+frontend/.next/
+backend/static/
+
+# Data & uploads
+backend/data/
+
+# Misc
+.DS_Store
+.qoder/
+cloudflared
+cloudflared.tgz
+gh
+gh.tar.gz
+*.log
+.env
+
+# 报名表/文档（不上传）
+*.docx
+~$*
+
+# 大文件/归档
+zhixun-gongjiang-main.zip
+*.zip
+
+# YOLO训练大文件
+backend/dataset.zip
+backend/train/crack.zip
+backend/train/ppe.zip
+backend/train/crack_dataset/
+backend/train/ppe_dataset/
+backend/train/dataset/
+backend/train/raw_data/
+backend/train/merged_dataset/train/
+backend/train/merged_dataset/valid/
+backend/train/merged_dataset/test/
+backend/train/merged_dataset/*.cache
+backend/train/yolov8s.pt
+backend/train/runs/detect/merged_safety/
+backend/train/runs/detect/hardhat_safety/weights/
+backend/train/runs/detect/merged_safety_mps/weights/last.pt
+backend/train/runs/detect/merged_safety_mps/weights/best.pt
+backend/train/runs/detect/merged_safety_5060ti/weights/epoch*.pt
+backend/train/runs/detect/merged_safety_5060ti/weights/last.pt
+backend/train/runs/detect/merged_safety_5060ti/weights/best.pt
+backend/train/runs/detect/test_run*/
+backend/train/runs/detect/runs/
+backend/train/*.log
+backend/train/progress.txt
+backend/train/full_train_log.txt
+backend/train/full_train_err.txt
+backend/train/yolo*.pt
+
+# 模型权重（通过Git LFS管理）
+backend/models/*.pt

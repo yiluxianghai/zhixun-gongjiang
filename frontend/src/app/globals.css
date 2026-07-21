@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f8fafc;
+  --foreground: #1e293b;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* 卡片样式 */
+.card {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  border: 1px solid #e2e8f0;
+}
+
+/* 风险等级颜色 */
+.risk-major { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+.risk-larger { background: #fffbeb; color: #d97706; border: 1px solid #fde68a; }
+.risk-normal { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
+
+/* 状态标签颜色 */
+.status-pending { background: #fef2f2; color: #dc2626; }
+.status-progress { background: #fffbeb; color: #d97706; }
+.status-review { background: #eff6ff; color: #2563eb; }
+.status-closed { background: #f0fdf4; color: #16a34a; }
+.status-failed { background: #fef2f2; color: #dc2626; }
